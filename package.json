@@ -1,18 +1,13 @@
 {
-  "name": "artspan-checker",
+  "name": "artspan-stealth-checker",
   "version": "1.0.0",
-  "description": "Stripe Checker API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.0"
-  }
-}
-"dependencies": {
-    "express": "^4.18.2",
     "puppeteer": "^21.0.0",
     "axios": "^1.6.0"
+  }
 }
