@@ -1,6 +1,7 @@
 {
-  "name": "stripe-checker-api",
+  "name": "artspan-checker",
   "version": "1.0.0",
+  "description": "Stripe Checker API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
