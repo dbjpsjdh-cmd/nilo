@@ -1,5 +1,6 @@
 flask
 requests
+beautifulsoup4
 fake-useragent
 gunicorn
-beautifulsoup4
+curl_cffi
